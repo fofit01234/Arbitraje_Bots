@@ -44,7 +44,6 @@ if "consecutive_losing_trades" not in st.session_state:
 if "circuit_breaker_triggered" not in st.session_state:
     st.session_state.circuit_breaker_triggered = False
 
-
 # =========================================================
 # OPTIMIZED EXTRACTION AND ROUTE FUNCTIONS
 # =========================================================
@@ -60,7 +59,7 @@ def get_base_markets(_exchange):
         st.error(f"Error connecting to Binance: {e}")
         return {}, []
 
-    # Exclude ultra-low liquidity fiat currencies to avoid false positives and massive slippage
+    # Exclude ultra-low liquidity fiat currencies
     discarded_fiat = {"IDR", "BRL", "TRY", "RUB", "ARS", "UAH", "PLN", "RON", "CZK", "ZAR", "NGN", "MXN", "COP"}
 
     spot_markets = {
@@ -113,9 +112,6 @@ def build_routes(spot_markets, selected_currencies):
     return routes
 
 def calculate_arbitrage(tickers, route_info, capital, fee, min_volume=10000.0):
-    """
-    Calculates gross yield and applies trading fees per order executed.
-    """
     amount = capital
     for step in route_info["steps"]:
         symbol = step["symbol"]
@@ -148,7 +144,6 @@ def calculate_arbitrage(tickers, route_info, capital, fee, min_volume=10000.0):
 
     profit_pct = (amount - capital) / capital
     return amount, profit_pct
-
 
 # =========================================================
 # SIDEBAR PANEL (RISK & CONTROL CONFIGURATION)
@@ -217,7 +212,6 @@ st.sidebar.divider()
 
 trade_amount = st.sidebar.number_input("Trade Amount per Simulation (USDT):", min_value=10.0, value=100.0, step=10.0)
 
-# Fee configuration and minimum threshold
 fee_pct = st.sidebar.number_input(
     "Fee per Order (%):", 
     min_value=0.0, 
@@ -235,7 +229,7 @@ profit_threshold = st.sidebar.slider(
     step=0.01
 ) / 100
 
-refresh_interval = st.sidebar.slider("Refresh Interval (sec):", min_value=1, max_value=10, value=2)
+refresh_interval = st.sidebar.slider("Refresh Interval (sec):", min_value=5, max_value=30, value=5)
 
 col_btn1, col_btn2 = st.sidebar.columns(2)
 with col_btn1:
@@ -290,18 +284,21 @@ with col_right:
 st.subheader("📜 Executed Trades Log")
 history_container = st.empty()
 
-
 # =========================================================
-# REAL-TIME LOOP WITH RISK FILTERS
+# REAL-TIME LOOP WITH RATE-LIMIT & RISK FILTERS
 # =========================================================
 if st.session_state.running and not st.session_state.circuit_breaker_triggered:
     if not valid_routes:
         st.error("No valid routes available for the selected currencies. Choose more currencies in the sidebar.")
     else:
+        # OPTIMIZATION: Extract only active trading symbols to query API efficiently
+        active_symbols = list(set([step["symbol"] for route in valid_routes for step in route["steps"]]))
+        
         try:
-            tickers = exchange.fetch_tickers()
+            # Query ONLY the targeted pairs instead of fetching thousands of global market tickers
+            tickers = exchange.fetch_tickers(active_symbols)
         except Exception as e:
-            st.warning(f"Retrying connection to Binance... ({e})")
+            st.warning(f"Connection error or API rate limit: ({e}). Retrying safely...")
             tickers = {}
 
         opportunities = []
@@ -311,7 +308,6 @@ if st.session_state.running and not st.session_state.circuit_breaker_triggered:
                 res = calculate_arbitrage(tickers, route_info, trade_amount, fee_pct)
                 if res:
                     final_amount, profit_pct = res
-                    # MINIMUM NET PROFIT FILTER
                     if profit_pct >= profit_threshold:
                         route_str = " ➔ ".join(route_info["nodes"])
                         opportunities.append({
@@ -336,20 +332,18 @@ if st.session_state.running and not st.session_state.circuit_breaker_triggered:
             if st.session_state.balance_usdt >= trade_amount:
                 theoretical_profit = final_top - trade_amount
                 
-                # APPLY SIMULATED SLIPPAGE (Emulates real order latency)
                 slippage_penalty = random.uniform(0.0002, 0.0008) if simulate_slippage else 0.0
                 real_profit = theoretical_profit - (trade_amount * slippage_penalty)
 
                 st.session_state.balance_usdt += real_profit
 
-                # CIRCUIT BREAKER CONTROL
                 if real_profit < 0:
                     st.session_state.consecutive_losing_trades += 1
                     if st.session_state.consecutive_losing_trades >= max_consecutive_losses:
                         st.session_state.circuit_breaker_triggered = True
                         st.session_state.running = False
                 else:
-                    st.session_state.consecutive_losing_trades = 0  # Reset counter on successful trade
+                    st.session_state.consecutive_losing_trades = 0
 
                 st.session_state.trade_history.append({
                     "Date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -365,7 +359,7 @@ if st.session_state.running and not st.session_state.circuit_breaker_triggered:
                 })
         else:
             opportunities_container.info(
-                f"Scanning {len(valid_routes)} routes... None exceed the triple fee + required threshold ({profit_threshold * 100:.2f}%)."
+                f"Scanning {len(valid_routes)} routes... None exceed threshold ({profit_threshold * 100:.2f}%)."
             )
 
         if st.session_state.trade_history:
@@ -374,7 +368,9 @@ if st.session_state.running and not st.session_state.circuit_breaker_triggered:
         else:
             history_container.write("Awaiting first simulated trade...")
 
-        time.sleep(refresh_interval)
+        # SAFE SLEEP: Ensure a minimum interval floor to protect rate limits
+        safe_interval = max(refresh_interval, 5)
+        time.sleep(safe_interval)
         st.rerun()
 else:
     if not st.session_state.circuit_breaker_triggered:
