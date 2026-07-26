@@ -1,10 +1,11 @@
 """
-Dashboard de Arbitraje Triangular Masivo en Binance (Paper Trading)
-===================================================================
-Ejecutar con: streamlit run arbotraje_binace_2.py
+Massive Triangular Arbitrage Dashboard on Binance (Paper Trading / Production Guardrails)
+========================================================================================
+Run with: streamlit run app.py
 """
 
 import time
+import random
 import ccxt
 import pandas as pd
 import plotly.express as px
@@ -12,113 +13,121 @@ import streamlit as st
 from datetime import datetime
 
 # =========================================================
-# CONFIGURACIÓN DE PÁGINA Y ESTILOS
+# PAGE CONFIGURATION AND STYLES
 # =========================================================
 st.set_page_config(
-    page_title="Binance Massive Triangular Arbitrage",
+    page_title="Binance Massive Triangular Arbitrage Pro",
     page_icon="⚡",
     layout="wide",
 )
 
-st.title("⚡ Arbitraje Triangular Masivo — Binance")
-st.caption("Escanear automáticamente todas las combinaciones operables con volumen real.")
+st.title("⚡ Massive Triangular Arbitrage — Guardrails Pro")
+st.caption("Real-time massive scanning with slippage, fee mitigation, and Circuit Breaker.")
 
 # =========================================================
-# ESTADO GLOBAL DE LA APLICACIÓN
+# GLOBAL APPLICATION STATE AND SECURITY
 # =========================================================
 if "balance_usdt" not in st.session_state:
     st.session_state.balance_usdt = 1000.0
-if "balance_inicial" not in st.session_state:
-    st.session_state.balance_inicial = 1000.0
-if "historial_trades" not in st.session_state:
-    st.session_state.historial_trades = []
-if "historial_balance" not in st.session_state:
-    st.session_state.historial_balance = [{"Hora": datetime.now().strftime("%H:%M:%S"), "USDT": 1000.0}]
+if "initial_balance" not in st.session_state:
+    st.session_state.initial_balance = 1000.0
+if "trade_history" not in st.session_state:
+    st.session_state.trade_history = []
+if "balance_history" not in st.session_state:
+    st.session_state.balance_history = [{"Time": datetime.now().strftime("%H:%M:%S"), "USDT": 1000.0}]
 if "running" not in st.session_state:
     st.session_state.running = False
 
+# PRODUCTION GUARDRAILS
+if "consecutive_losing_trades" not in st.session_state:
+    st.session_state.consecutive_losing_trades = 0
+if "circuit_breaker_triggered" not in st.session_state:
+    st.session_state.circuit_breaker_triggered = False
+
 
 # =========================================================
-# FUNCIONES OPTIMIZADAS DE EXTRACCIÓN Y RUTA
+# OPTIMIZED EXTRACTION AND ROUTE FUNCTIONS
 # =========================================================
 @st.cache_resource
-def conectar_exchange():
+def connect_exchange():
     return ccxt.binance({"enableRateLimit": True})
 
-@st.cache_data(ttl=3600)  # Recarga la lista de mercados cada hora
-def obtener_mercados_base(_exchange):
+@st.cache_data(ttl=3600)  # Reload market list every hour
+def get_base_markets(_exchange):
     try:
-        mercados = _exchange.load_markets()
+        markets = _exchange.load_markets()
     except Exception as e:
-        st.error(f"Error al conectar con Binance: {e}")
+        st.error(f"Error connecting to Binance: {e}")
         return {}, []
 
-    # Excluir monedas Fiat de muy baja liquidez para evitar falsos positivos
-    fiat_descartadas = {"IDR", "BRL", "TRY", "RUB", "ARS", "UAH", "PLN", "RON", "CZK", "ZAR", "NGN", "MXN", "COP"}
+    # Exclude ultra-low liquidity fiat currencies to avoid false positives and massive slippage
+    discarded_fiat = {"IDR", "BRL", "TRY", "RUB", "ARS", "UAH", "PLN", "RON", "CZK", "ZAR", "NGN", "MXN", "COP"}
 
-    mercados_spot = {
-        symbol: market for symbol, market in mercados.items()
+    spot_markets = {
+        symbol: market for symbol, market in markets.items()
         if market['spot'] and market['active'] 
-        and market['base'] not in fiat_descartadas 
-        and market['quote'] not in fiat_descartadas
+        and market['base'] not in discarded_fiat 
+        and market['quote'] not in discarded_fiat
     }
 
-    # Contar frecuencia de pares disponibles
-    conteo_monedas = {}
-    for market in mercados_spot.values():
+    currency_count = {}
+    for market in spot_markets.values():
         base, quote = market['base'], market['quote']
-        conteo_monedas[base] = conteo_monedas.get(base, 0) + 1
-        conteo_monedas[quote] = conteo_monedas.get(quote, 0) + 1
+        currency_count[base] = currency_count.get(base, 0) + 1
+        currency_count[quote] = currency_count.get(quote, 0) + 1
 
-    monedas_ordenadas = sorted(conteo_monedas.keys(), key=lambda x: conteo_monedas[x], reverse=True)
+    sorted_currencies = sorted(currency_count.keys(), key=lambda x: currency_count[x], reverse=True)
     
-    return mercados_spot, monedas_ordenadas
+    return spot_markets, sorted_currencies
 
-def construir_rutas(mercados_spot, monedas_seleccionadas):
-    monedas_principales = {"USDT", "BTC", "ETH", "BNB", "FDUSD"}
-    monedas_validas = set(monedas_seleccionadas)
+def build_routes(spot_markets, selected_currencies):
+    main_currencies = {"USDT", "BTC", "ETH", "BNB", "FDUSD"}
+    valid_currencies = set(selected_currencies)
 
-    rutas = []
-    pares_existentes = {}
-    for symbol, market in mercados_spot.items():
+    routes = []
+    existing_pairs = {}
+    for symbol, market in spot_markets.items():
         base, quote = market['base'], market['quote']
-        if base in monedas_validas and quote in monedas_validas:
-            pares_existentes[(base, quote)] = {"symbol": symbol, "action": "sell"}
-            pares_existentes[(quote, base)] = {"symbol": symbol, "action": "buy"}
+        if base in valid_currencies and quote in valid_currencies:
+            existing_pairs[(base, quote)] = {"symbol": symbol, "action": "sell"}
+            existing_pairs[(quote, base)] = {"symbol": symbol, "action": "buy"}
 
-    monedas_lista = list(monedas_validas)
-    for a in monedas_principales.intersection(monedas_validas):
-        for b in monedas_lista:
+    currency_list = list(valid_currencies)
+    for a in main_currencies.intersection(valid_currencies):
+        for b in currency_list:
             if a == b: continue
-            if (a, b) not in pares_existentes: continue
+            if (a, b) not in existing_pairs: continue
             
-            for c in monedas_lista:
+            for c in currency_list:
                 if c == a or c == b: continue
-                if (b, c) in pares_existentes and (c, a) in pares_existentes:
-                    rutas.append({
-                        "nodos": (a, b, c, a),
-                        "pasos": [
-                            pares_existentes[(a, b)],
-                            pares_existentes[(b, c)],
-                            pares_existentes[(c, a)]
+                if (b, c) in existing_pairs and (c, a) in existing_pairs:
+                    routes.append({
+                        "nodes": (a, b, c, a),
+                        "steps": [
+                            existing_pairs[(a, b)],
+                            existing_pairs[(b, c)],
+                            existing_pairs[(c, a)]
                         ]
                     })
 
-    return rutas
+    return routes
 
-def calcular_arbitraje(tickers, ruta_info, capital, comision, vol_minimo=10000.0):
-    monto = capital
-    for paso in ruta_info["pasos"]:
-        symbol = paso["symbol"]
-        action = paso["action"]
+def calculate_arbitrage(tickers, route_info, capital, fee, min_volume=10000.0):
+    """
+    Calculates gross yield and applies trading fees per order executed.
+    """
+    amount = capital
+    for step in route_info["steps"]:
+        symbol = step["symbol"]
+        action = step["action"]
         ticker = tickers.get(symbol)
         
         if not ticker or not ticker.get("ask") or not ticker.get("bid"):
             return None
 
-        # FILTRO 1: Volumen en 24h mínimo
-        volumen_24h = ticker.get("quoteVolume", 0) or 0
-        if volumen_24h < vol_minimo:
+        # FILTER 1: Minimum 24h volume
+        volume_24h = ticker.get("quoteVolume", 0) or 0
+        if volume_24h < min_volume:
             return None
 
         ask = ticker["ask"]
@@ -127,75 +136,90 @@ def calcular_arbitraje(tickers, ruta_info, capital, comision, vol_minimo=10000.0
         if ask <= 0 or bid <= 0: 
             return None
 
-        # FILTRO 2: Spread razonable (<1%)
+        # FILTER 2: Reasonable spread (<1%)
         spread = (ask - bid) / ask
         if spread > 0.01:
             return None
 
         if action == "buy":
-            monto = (monto / ask) * (1 - comision)
+            amount = (amount / ask) * (1 - fee)
         else:
-            monto = (monto * bid) * (1 - comision)
+            amount = (amount * bid) * (1 - fee)
 
-    beneficio_pct = (monto - capital) / capital
-    return monto, beneficio_pct
+    profit_pct = (amount - capital) / capital
+    return amount, profit_pct
 
 
 # =========================================================
-# PANEL LATERAL (CONFIGURACIÓN)
+# SIDEBAR PANEL (RISK & CONTROL CONFIGURATION)
 # =========================================================
-st.sidebar.header("💰 Gestión de Capital")
+st.sidebar.header("💰 Capital Management")
 
-# --- AJUSTE MANUAL DE BALANCE ---
-nuevo_balance = st.sidebar.number_input(
-    "Balance Inicial Simulación (USDT):", 
+new_balance = st.sidebar.number_input(
+    "Simulation Starting Balance (USDT):", 
     min_value=10.0, 
-    value=float(st.session_state.balance_inicial), 
+    value=float(st.session_state.initial_balance), 
     step=100.0
 )
 
-if nuevo_balance != st.session_state.balance_inicial:
-    st.session_state.balance_inicial = nuevo_balance
-    st.session_state.balance_usdt = nuevo_balance
-    st.session_state.historial_balance = [{"Hora": datetime.now().strftime("%H:%M:%S"), "USDT": nuevo_balance}]
+if new_balance != st.session_state.initial_balance:
+    st.session_state.initial_balance = new_balance
+    st.session_state.balance_usdt = new_balance
+    st.session_state.balance_history = [{"Time": datetime.now().strftime("%H:%M:%S"), "USDT": new_balance}]
 
 st.sidebar.divider()
-st.sidebar.header("⚙️ Cobertura y Monedas")
+st.sidebar.header("🛡️ Loss Protection Guardrails")
 
-exchange = conectar_exchange()
-mercados_spot, monedas_ordenadas = obtener_mercados_base(exchange)
+max_consecutive_losses = st.sidebar.number_input(
+    "Max Consecutive Losses Limit (Circuit Breaker):", 
+    min_value=1, 
+    max_value=10, 
+    value=2,
+    help="Stops the bot immediately if this amount of consecutive losing trades is reached."
+)
 
-modo_alcance = st.sidebar.selectbox(
-    "Preajuste de Monedas:",
-    ["Top 15 Monedas", "Top 50 Monedas", "Todas las Monedas Disponibles", "Personalizado"],
+simulate_slippage = st.sidebar.checkbox(
+    "Simulate Slippage & Network Latency", 
+    value=True,
+    help="Deducts between 0.02% and 0.08% extra per trade to emulate real execution conditions."
+)
+
+st.sidebar.divider()
+st.sidebar.header("⚙️ Coverage & Currencies")
+
+exchange = connect_exchange()
+spot_markets, sorted_currencies = get_base_markets(exchange)
+
+coverage_mode = st.sidebar.selectbox(
+    "Currency Preset:",
+    ["Top 15 Currencies", "Top 50 Currencies", "All Available Currencies", "Custom"],
     index=1
 )
 
-if modo_alcance == "Top 15 Monedas":
-    monedas_default = monedas_ordenadas[:15]
-elif modo_alcance == "Top 50 Monedas":
-    monedas_default = monedas_ordenadas[:50]
-elif modo_alcance == "Todas las Monedas Disponibles":
-    monedas_default = monedas_ordenadas
+if coverage_mode == "Top 15 Currencies":
+    default_currencies = sorted_currencies[:15]
+elif coverage_mode == "Top 50 Currencies":
+    default_currencies = sorted_currencies[:50]
+elif coverage_mode == "All Available Currencies":
+    default_currencies = sorted_currencies
 else:
-    monedas_default = monedas_ordenadas[:15]
+    default_currencies = sorted_currencies[:15]
 
-monedas_seleccionadas = st.sidebar.multiselect(
-    "Monedas activas en el escáner:",
-    options=monedas_ordenadas,
-    default=monedas_default
+selected_currencies = st.sidebar.multiselect(
+    "Active Currencies in Scanner:",
+    options=sorted_currencies,
+    default=default_currencies
 )
 
-rutas_validas = construir_rutas(mercados_spot, monedas_seleccionadas)
+valid_routes = build_routes(spot_markets, selected_currencies)
 
 st.sidebar.divider()
 
-monto_operacion = st.sidebar.number_input("Monto por simulación (USDT):", min_value=10.0, value=100.0, step=10.0)
-umbral_beneficio = st.sidebar.slider("Ganancia mínima requerida (%):", min_value=0.0, max_value=3.0, value=0.1, step=0.01) / 100
+trade_amount = st.sidebar.number_input("Trade Amount per Simulation (USDT):", min_value=10.0, value=100.0, step=10.0)
 
-# --- COMISIÓN PASO A PASO DE 0.001% ---
-comision_pct = st.sidebar.number_input(
-    "Comisión por orden (%):", 
+# Fee configuration and minimum threshold
+fee_pct = st.sidebar.number_input(
+    "Fee per Order (%):", 
     min_value=0.0, 
     max_value=1.0, 
     value=0.100, 
@@ -203,124 +227,159 @@ comision_pct = st.sidebar.number_input(
     format="%.3f"
 ) / 100
 
-intervalo_refresco = st.sidebar.slider("Intervalo entre lecturas (seg):", min_value=1, max_value=10, value=2)
+profit_threshold = st.sidebar.slider(
+    "Minimum Required NET Profit (%):", 
+    min_value=0.0, 
+    max_value=3.0, 
+    value=0.15, 
+    step=0.01
+) / 100
+
+refresh_interval = st.sidebar.slider("Refresh Interval (sec):", min_value=1, max_value=10, value=2)
 
 col_btn1, col_btn2 = st.sidebar.columns(2)
 with col_btn1:
-    if st.button("▶️ Iniciar", use_container_width=True):
+    if st.button("▶️ Start", use_container_width=True):
         st.session_state.running = True
 with col_btn2:
-    if st.button("⏸️ Detener", use_container_width=True):
+    if st.button("⏸️ Stop", use_container_width=True):
         st.session_state.running = False
 
-if st.sidebar.button("🔄 Reiniciar Balance y Historial", use_container_width=True):
-    st.session_state.balance_usdt = st.session_state.balance_inicial
-    st.session_state.historial_trades = []
-    st.session_state.historial_balance = [{"Hora": datetime.now().strftime("%H:%M:%S"), "USDT": st.session_state.balance_inicial}]
+if st.sidebar.button("🔄 Reset Balance & Guardrails", use_container_width=True):
+    st.session_state.balance_usdt = st.session_state.initial_balance
+    st.session_state.trade_history = []
+    st.session_state.balance_history = [{"Time": datetime.now().strftime("%H:%M:%S"), "USDT": st.session_state.initial_balance}]
+    st.session_state.consecutive_losing_trades = 0
+    st.session_state.circuit_breaker_triggered = False
     st.rerun()
 
 # =========================================================
-# CUERPO PRINCIPAL DEL DASHBOARD
+# MAIN DASHBOARD BODY
 # =========================================================
+if st.session_state.circuit_breaker_triggered:
+    st.error(
+        f"🚨 **CIRCUIT BREAKER TRIGGERED:** Reached {st.session_state.consecutive_losing_trades} consecutive losses. "
+        "The bot has halted automatic execution to protect remaining capital. Click 'Reset' in the sidebar to unblock."
+    )
+
 col1, col2, col3, col4 = st.columns(4)
 
-pnl_abs = st.session_state.balance_usdt - st.session_state.balance_inicial
-pnl_pct = (pnl_abs / st.session_state.balance_inicial) * 100 if st.session_state.balance_inicial > 0 else 0
+pnl_abs = st.session_state.balance_usdt - st.session_state.initial_balance
+pnl_pct = (pnl_abs / st.session_state.initial_balance) * 100 if st.session_state.initial_balance > 0 else 0
 
-col1.metric("Balance Virtual", f"{st.session_state.balance_usdt:.2f} USDT")
-col2.metric("PnL Simulado", f"{pnl_abs:+.2f} USDT", delta=f"{pnl_pct:+.2f}%")
-col3.metric("Monedas Seleccionadas", len(monedas_seleccionadas))
-col4.metric("Rutas Triangulares", len(rutas_validas))
+col1.metric("Virtual Balance", f"{st.session_state.balance_usdt:.2f} USDT")
+col2.metric("Realistic Simulated PnL", f"{pnl_abs:+.2f} USDT", delta=f"{pnl_pct:+.2f}%")
+col3.metric("Consecutive Losses", f"{st.session_state.consecutive_losing_trades} / {max_consecutive_losses}")
+col4.metric("Triangular Routes", len(valid_routes))
 
 st.divider()
 
 col_left, col_right = st.columns([3, 2])
 
 with col_left:
-    st.subheader("📈 Crecimiento del Portafolio")
-    df_balance = pd.DataFrame(st.session_state.historial_balance)
-    fig = px.line(df_balance, x="Hora", y="USDT", markers=True)
+    st.subheader("📈 Portfolio Growth")
+    df_balance = pd.DataFrame(st.session_state.balance_history)
+    fig = px.line(df_balance, x="Time", y="USDT", markers=True)
     fig.update_layout(height=350, margin=dict(l=10, r=10, t=10, b=10))
     st.plotly_chart(fig, use_container_width=True)
 
 with col_right:
-    st.subheader("🎯 Oportunidades Detectadas")
-    container_oportunidades = st.empty()
+    st.subheader("🎯 Filtered Opportunities (Post-Fee)")
+    opportunities_container = st.empty()
 
-st.subheader("📜 Registro de Trades Ejecutados")
-container_historial = st.empty()
+st.subheader("📜 Executed Trades Log")
+history_container = st.empty()
 
 
 # =========================================================
-# BUCLE EN TIEMPO REAL
+# REAL-TIME LOOP WITH RISK FILTERS
 # =========================================================
-if st.session_state.running:
-    if not rutas_validas:
-        st.error("No hay rutas disponibles con las monedas seleccionadas. Selecciona más monedas en la barra lateral.")
+if st.session_state.running and not st.session_state.circuit_breaker_triggered:
+    if not valid_routes:
+        st.error("No valid routes available for the selected currencies. Choose more currencies in the sidebar.")
     else:
         try:
             tickers = exchange.fetch_tickers()
         except Exception as e:
-            st.warning(f"Reintentando conexión con Binance... ({e})")
+            st.warning(f"Retrying connection to Binance... ({e})")
             tickers = {}
 
-        oportunidades = []
+        opportunities = []
 
         if tickers:
-            for ruta_info in rutas_validas:
-                res = calcular_arbitraje(tickers, ruta_info, monto_operacion, comision_pct)
+            for route_info in valid_routes:
+                res = calculate_arbitrage(tickers, route_info, trade_amount, fee_pct)
                 if res:
-                    monto_final, beneficio_pct = res
-                    if beneficio_pct >= umbral_beneficio:
-                        ruta_str = " ➔ ".join(ruta_info["nodos"])
-                        oportunidades.append({
-                            "Ruta": ruta_str,
-                            "Beneficio (%)": round(beneficio_pct * 100, 3),
-                            "Ganancia (USDT)": round(monto_final - monto_operacion, 3),
-                            "Retorno Total": round(monto_final, 2),
-                            "raw_data": (ruta_str, beneficio_pct, monto_final)
+                    final_amount, profit_pct = res
+                    # MINIMUM NET PROFIT FILTER
+                    if profit_pct >= profit_threshold:
+                        route_str = " ➔ ".join(route_info["nodes"])
+                        opportunities.append({
+                            "Route": route_str,
+                            "Net Profit (%)": round(profit_pct * 100, 3),
+                            "Est. Profit (USDT)": round(final_amount - trade_amount, 3),
+                            "Total Return": round(final_amount, 2),
+                            "raw_data": (route_str, profit_pct, final_amount)
                         })
 
-        if oportunidades:
-            df_ops = pd.DataFrame(oportunidades).sort_values(by="Beneficio (%)", ascending=False)
-            container_oportunidades.dataframe(
-                df_ops[["Ruta", "Beneficio (%)", "Ganancia (USDT)"]], 
+        if opportunities:
+            df_ops = pd.DataFrame(opportunities).sort_values(by="Net Profit (%)", ascending=False)
+            opportunities_container.dataframe(
+                df_ops[["Route", "Net Profit (%)", "Est. Profit (USDT)"]], 
                 hide_index=True, 
                 use_container_width=True
             )
 
             top_op = df_ops.iloc[0]["raw_data"]
-            ruta_top, ben_top, final_top = top_op
+            route_top, ben_top, final_top = top_op
 
-            if st.session_state.balance_usdt >= monto_operacion:
-                ganancia = final_top - monto_operacion
-                st.session_state.balance_usdt += ganancia
+            if st.session_state.balance_usdt >= trade_amount:
+                theoretical_profit = final_top - trade_amount
                 
-                st.session_state.historial_trades.append({
-                    "Fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "Ruta Triangular": ruta_top,
-                    "Rendimiento": f"{ben_top*100:+.3f}%",
-                    "Ganancia Neta (USDT)": round(ganancia, 4),
-                    "Nuevo Balance": round(st.session_state.balance_usdt, 2)
+                # APPLY SIMULATED SLIPPAGE (Emulates real order latency)
+                slippage_penalty = random.uniform(0.0002, 0.0008) if simulate_slippage else 0.0
+                real_profit = theoretical_profit - (trade_amount * slippage_penalty)
+
+                st.session_state.balance_usdt += real_profit
+
+                # CIRCUIT BREAKER CONTROL
+                if real_profit < 0:
+                    st.session_state.consecutive_losing_trades += 1
+                    if st.session_state.consecutive_losing_trades >= max_consecutive_losses:
+                        st.session_state.circuit_breaker_triggered = True
+                        st.session_state.running = False
+                else:
+                    st.session_state.consecutive_losing_trades = 0  # Reset counter on successful trade
+
+                st.session_state.trade_history.append({
+                    "Date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "Triangular Route": route_top,
+                    "Real Yield": f"{(real_profit / trade_amount) * 100:+.3f}%",
+                    "Net Result (USDT)": round(real_profit, 4),
+                    "New Balance": round(st.session_state.balance_usdt, 2)
                 })
 
-                st.session_state.historial_balance.append({
-                    "Hora": datetime.now().strftime("%H:%M:%S"),
+                st.session_state.balance_history.append({
+                    "Time": datetime.now().strftime("%H:%M:%S"),
                     "USDT": round(st.session_state.balance_usdt, 2)
                 })
         else:
-            container_oportunidades.info(f"Escaneando {len(rutas_validas)} rutas en tiempo real... Sin diferencias de precio aprovechables en este ciclo.")
+            opportunities_container.info(
+                f"Scanning {len(valid_routes)} routes... None exceed the triple fee + required threshold ({profit_threshold * 100:.2f}%)."
+            )
 
-        if st.session_state.historial_trades:
-            df_hist = pd.DataFrame(st.session_state.historial_trades).iloc[::-1]
-            container_historial.dataframe(df_hist, hide_index=True, use_container_width=True)
+        if st.session_state.trade_history:
+            df_hist = pd.DataFrame(st.session_state.trade_history).iloc[::-1]
+            history_container.dataframe(df_hist, hide_index=True, use_container_width=True)
         else:
-            container_historial.write("Esperando primer trade simulado...")
+            history_container.write("Awaiting first simulated trade...")
 
-        time.sleep(intervalo_refresco)
+        time.sleep(refresh_interval)
         st.rerun()
 else:
-    st.info("💡 Haz clic en '▶️ Iniciar' en el menú de la izquierda para comenzar el escaneo.")
-    if st.session_state.historial_trades:
-        df_hist = pd.DataFrame(st.session_state.historial_trades).iloc[::-1]
-        container_historial.dataframe(df_hist, hide_index=True, use_container_width=True)
+    if not st.session_state.circuit_breaker_triggered:
+        st.info("💡 Click '▶️ Start' in the left sidebar to start scanning.")
+    
+    if st.session_state.trade_history:
+        df_hist = pd.DataFrame(st.session_state.trade_history).iloc[::-1]
+        history_container.dataframe(df_hist, hide_index=True, use_container_width=True)
