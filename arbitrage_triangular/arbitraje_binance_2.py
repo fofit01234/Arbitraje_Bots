@@ -229,7 +229,7 @@ profit_threshold = st.sidebar.slider(
     step=0.01
 ) / 100
 
-refresh_interval = st.sidebar.slider("Refresh Interval (sec):", min_value=5, max_value=30, value=5)
+refresh_interval = st.sidebar.slider("Refresh Interval (sec):", min_value=1, max_value=30, value=1)
 
 col_btn1, col_btn2 = st.sidebar.columns(2)
 with col_btn1:
