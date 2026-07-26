@@ -1,7 +1,7 @@
 """
 Dashboard de Arbitraje Triangular Masivo en Binance (Paper Trading)
 ===================================================================
-Ejecutar con: streamlit run app.py
+Ejecutar con: streamlit run arbotraje_binace_2.py
 """
 
 import time
