@@ -16,12 +16,12 @@ from datetime import datetime
 # PAGE CONFIGURATION AND STYLES
 # =========================================================
 st.set_page_config(
-    page_title="Binance Massive Triangular Arbitrage Pro",
+    page_title="Binance Massive Triangular Arbitrage",
     page_icon="⚡",
     layout="wide",
 )
 
-st.title("⚡ Massive Triangular Arbitrage — Guardrails Pro")
+st.title("⚡ Massive Triangular Arbitrage")
 st.caption("Real-time massive scanning with slippage, fee mitigation, and Circuit Breaker.")
 
 # =========================================================
