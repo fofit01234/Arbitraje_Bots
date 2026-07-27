@@ -1,7 +1,7 @@
 """
-Escáner de Funding Rate + Simulador de Rendimiento Mensual y Compuesto
-====================================================================
-Ejecutar con: streamlit run app.py
+Funding Rate Scanner + Monthly & Compound Yield Simulator
+=========================================================
+Run with: streamlit run app.py
 """
 
 import ccxt
@@ -16,11 +16,11 @@ st.set_page_config(
     layout="wide",
 )
 
-st.title("🛡️ Funding Rate Scanner & Simulador Mensual")
-st.caption("Estrategia Delta-Neutral con evaluación de riesgos y proyección de capital a largo plazo.")
+st.title("🛡️ Funding Rate Scanner & Monthly Simulator")
+st.caption("Delta-Neutral strategy with risk assessment and long-term capital projection.")
 
 # =========================================================
-# CONEXIÓN Y DATOS
+# CONNECTION AND DATA
 # =========================================================
 @st.cache_resource
 def conectar_exchange():
@@ -33,50 +33,50 @@ def obtener_datos_mercado(_exchange):
         funding_rates = _exchange.fetch_funding_rates()
         return tickers, funding_rates
     except Exception as e:
-        st.error(f"Error al conectar con Binance: {e}")
+        st.error(f"Error connecting to Binance: {e}")
         return {}, {}
 
 # =========================================================
-# PANEL LATERAL: CONFIGURACIÓN
+# SIDEBAR: CONFIGURATION
 # =========================================================
-st.sidebar.header("💰 Configuración de Capital")
-capital_total = st.sidebar.number_input("Capital Inicial (USDT):", min_value=20.0, value=1000.0, step=100.0)
+st.sidebar.header("💰 Capital Settings")
+capital_total = st.sidebar.number_input("Initial Capital (USDT):", min_value=20.0, value=1000.0, step=100.0)
 
 st.sidebar.divider()
-st.sidebar.header("🛡️ Filtros de Riesgo")
+st.sidebar.header("🛡️ Risk Filters")
 
 volumen_minimo = st.sidebar.number_input(
-    "Volumen Mínimo 24h (USDT):", 
+    "Minimum 24h Volume (USDT):", 
     min_value=100000.0, 
     value=10000000.0, 
     step=1000000.0
 )
 
-# Comisiones ajustadas con BNB (Taker)
-comision_spot_pct = st.sidebar.number_input("Comisión Spot (%):", value=0.075, step=0.005) / 100
-comision_fut_pct = st.sidebar.number_input("Comisión Futuros (%):", value=0.045, step=0.005) / 100
+# Fee settings with BNB discount (Taker)
+comision_spot_pct = st.sidebar.number_input("Spot Fee (%):", value=0.075, step=0.005) / 100
+comision_fut_pct = st.sidebar.number_input("Futures Fee (%):", value=0.045, step=0.005) / 100
 
 dias_max_recuperacion = st.sidebar.slider(
-    "Días máx. recup. comisiones:", 
+    "Max Days to Recover Fees:", 
     min_value=1, 
     max_value=10, 
     value=3
 )
 
 tasa_minima_8h = st.sidebar.number_input(
-    "Tasa Mínima 8h (%):", 
+    "Minimum 8h Rate (%):", 
     min_value=0.001, 
     value=0.010, 
     step=0.005,
     format="%.3f"
 ) / 100
 
-if st.sidebar.button("🔄 Actualizar Escáner", use_container_width=True):
+if st.sidebar.button("🔄 Refresh Scanner", use_container_width=True):
     st.cache_data.clear()
     st.rerun()
 
 # =========================================================
-# PROCESAMIENTO Y FILTRADO DE DATOS
+# DATA PROCESSING AND FILTERING
 # =========================================================
 exchange = conectar_exchange()
 tickers, funding_rates = obtener_datos_mercado(exchange)
@@ -116,7 +116,7 @@ if funding_rates and tickers:
             if dias_para_recuperar_comisiones > dias_max_recuperacion:
                 continue
 
-            # Rendimientos netos
+            # Net Yields
             ganancia_neta_mes_est = (ganancia_diaria_usdt * 30) - costo_comisiones_usdt
             rendimiento_mensual_neto_pct = (ganancia_neta_mes_est / capital_total) * 100
             apy_neto_pct = rendimiento_mensual_neto_pct * 12
@@ -126,97 +126,97 @@ if funding_rates and tickers:
             moneda = symbol.split(":")[0].replace("/USDT", "")
 
             oportunidades_seguras.append({
-                "Moneda": moneda,
-                "Precio USDT": precio_actual,
-                "Tasa 8h (%)": round(pago_8h_pct, 4),
-                "Rend. Diario (%)": round(pago_diario_pct, 3),
-                "Rend. Mensual Neto (%)": round(rendimiento_mensual_neto_pct, 2),
-                "Días p/ Pagar Fee": round(dias_para_recuperar_comisiones, 1),
-                "Ganancia Neta Mes 1 ($)": round(ganancia_neta_mes_est, 2),
-                "APY Neto (%)": round(apy_neto_pct, 2),
-                "Cantidad Cripto Exec": round(cantidad_cripto, 4),
+                "Coin": moneda,
+                "Price USDT": precio_actual,
+                "8h Rate (%)": round(pago_8h_pct, 4),
+                "Daily Yield (%)": round(pago_diario_pct, 3),
+                "Net Monthly Yield (%)": round(rendimiento_mensual_neto_pct, 2),
+                "Days to Pay Fees": round(dias_para_recuperar_comisiones, 1),
+                "Net Profit Month 1 ($)": round(ganancia_neta_mes_est, 2),
+                "Net APY (%)": round(apy_neto_pct, 2),
+                "Executed Crypto Qty": round(cantidad_cripto, 4),
                 "raw_rate": rate
             })
 
 # =========================================================
-# VISTAS EN PESTAÑAS (TABS)
+# TAB VIEWS
 # =========================================================
-tab_escanner, tab_simulador = st.tabs(["📊 Oportunidades Actuales", "📈 Simulador de Crecimiento Mensual"])
+tab_escanner, tab_simulador = st.tabs(["📊 Current Opportunities", "📈 Monthly Growth Simulator"])
 
 if oportunidades_seguras:
     df = pd.DataFrame(oportunidades_seguras).sort_values(by="raw_rate", ascending=False)
     top = df.iloc[0]
 
-    # --- PESTAÑA 1: ESCÁNER ---
+    # --- TAB 1: SCANNER ---
     with tab_escanner:
-        st.success(f"✅ **{len(df)} oportunidades** disponibles cumpliendo los filtros de seguridad.")
+        st.success(f"✅ **{len(df)} opportunities** available matching safety filters.")
 
         col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Opción Más Segura", top["Moneda"])
-        col2.metric("Rendimiento Mensual Neto", f"{top['Rend. Mensual Neto (%)']}%")
-        col3.metric("Recuperación de Fees", f"{top['Días p/ Pagar Fee']} días")
-        col4.metric("Ganancia Neta Mes 1", f"+${top['Ganancia Neta Mes 1 ($)']} USDT")
+        col1.metric("Safest Option", top["Coin"])
+        col2.metric("Net Monthly Yield", f"{top['Net Monthly Yield (%)']}%")
+        col3.metric("Fee Recovery Time", f"{top['Days to Pay Fees']} days")
+        col4.metric("Net Profit Month 1", f"+${top['Net Profit Month 1 ($)']} USDT")
 
         st.divider()
 
         col_l, col_r = st.columns([3, 2])
 
         with col_l:
-            st.subheader("📊 APY Neto por Moneda (Post-Comisiones)")
+            st.subheader("📊 Net APY by Coin (Post-Fees)")
             fig = px.bar(
                 df.head(10),
-                x="Moneda",
-                y="APY Neto (%)",
-                color="Días p/ Pagar Fee",
+                x="Coin",
+                y="Net APY (%)",
+                color="Days to Pay Fees",
                 color_continuous_scale="RdYlGn_r",
-                text="APY Neto (%)"
+                text="Net APY (%)"
             )
             st.plotly_chart(fig, use_container_width=True)
 
         with col_r:
-            st.subheader("🎯 Guía de Ejecución Rápida")
+            st.subheader("🎯 Quick Execution Guide")
             st.markdown(f"""
-            Para **{top['Moneda']}**:
-            * **Spot:** Comprar **{top['Cantidad Cripto Exec']} {top['Moneda']}** (aprox. ${capital_total/2:.2f} USDT).
-            * **Futuros (1x):** Vender Corto (Short) **{top['Cantidad Cripto Exec']} {top['Moneda']}**.
+            For **{top['Coin']}**:
+            * **Spot:** Buy **{top['Executed Crypto Qty']} {top['Coin']}** (approx. ${capital_total/2:.2f} USDT).
+            * **Futures (1x):** Short **{top['Executed Crypto Qty']} {top['Coin']}**.
             
-            ⚠️ **Comisiones netas estimadas:** **${costo_comisiones_usdt:.2f} USDT** (Se recuperan en **{top['Días p/ Pagar Fee']}** días).
+            ⚠️ **Estimated Net Fees:** **${costo_comisiones_usdt:.2f} USDT** (Recovered in **{top['Days to Pay Fees']}** days).
             """)
 
-        st.subheader("📜 Listado Completo")
+        st.subheader("📜 Complete List")
         st.dataframe(
-            df[["Moneda", "Precio USDT", "Tasa 8h (%)", "Rend. Mensual Neto (%)", "Días p/ Pagar Fee", "Ganancia Neta Mes 1 ($)", "APY Neto (%)"]],
+            df[["Coin", "Price USDT", "8h Rate (%)", "Net Monthly Yield (%)", "Days to Pay Fees", "Net Profit Month 1 ($)", "Net APY (%)"]],
             hide_index=True,
             use_container_width=True
         )
 
-    # --- PESTAÑA 2: SIMULADOR DE CRECIMIENTO ---
+    # --- TAB 2: GROWTH SIMULATOR ---
     with tab_simulador:
-        st.subheader("🚀 Proyección de Crecimiento A Largo Plazo")
-        st.caption("Simula cuánto acumularías repitiendo la estrategia todos los meses.")
+        st.subheader("🚀 Long-Term Growth Projection")
+        st.caption("Simulate how much capital you would accumulate by repeating this strategy every month.")
 
         col_sim1, col_sim2 = st.columns([1, 2])
 
         with col_sim1:
-            meses_simulacion = st.slider("Horizonte de Tiempo (Meses):", min_value=1, max_value=24, value=12)
+            meses_simulacion = st.slider("Time Horizon (Months):", min_value=1, max_value=24, value=12)
             
-            # Opción para seleccionar la tasa a simular (por defecto toma la mejor actual)
+            # Select rate to simulate (defaults to current best rate)
             tasa_mensual_base = st.number_input(
-                "Rendimiento Neto Mensual Estimado (%):",
-                value=float(top["Rend. Mensual Neto (%)"]),
+                "Estimated Net Monthly Yield (%):",
+                value=float(top["Net Monthly Yield (%)"]),
                 step=0.5,
-                help="Puedes usar la mejor tasa encontrada actualmente o ajustar una tasa promedio personalizada."
+                help="You can use the best rate currently found or adjust to a custom average rate."
             ) / 100
 
             reaporte_mensual = st.number_input(
-                "Aporte Adicional Mensual de tu Bolsillo (USDT):",
+                "Additional Monthly Contribution (USDT):",
                 min_value=0.0,
                 value=0.0,
                 step=50.0,
-                help="¿Planeas meterle más dinero propio cada mes?"
+                help="Do you plan to add more out-of-pocket capital every month?"
             )
 
-        # Lógica de cálculo mes a mes
+        # Month-by-month calculation logic
         datos_meses = []
         cap_simple = capital_total
         cap_compuesto = capital_total
@@ -225,67 +225,67 @@ if oportunidades_seguras:
         for mes in range(0, meses_simulacion + 1):
             if mes == 0:
                 datos_meses.append({
-                    "Mes": 0,
-                    "Capital Invertido": total_invertido_propio,
-                    "Interés Simple": cap_simple,
-                    "Interés Compuesto": cap_compuesto,
-                    "Ganancia Neta Compuesta": 0.0
+                    "Month": 0,
+                    "Invested Capital": total_invertido_propio,
+                    "Simple Interest": cap_simple,
+                    "Compound Interest": cap_compuesto,
+                    "Net Compound Profit": 0.0
                 })
             else:
-                # Interés Simple
+                # Simple Interest
                 ganancia_simple = (capital_total * tasa_mensual_base)
                 cap_simple += ganancia_simple + reaporte_mensual
 
-                # Interés Compuesto (La ganancia del mes anterior se reinvierte)
+                # Compound Interest (Previous month gains reinvested)
                 ganancia_compuesta = (cap_compuesto * tasa_mensual_base)
                 cap_compuesto += ganancia_compuesta + reaporte_mensual
 
                 total_invertido_propio += reaporte_mensual
 
                 datos_meses.append({
-                    "Mes": mes,
-                    "Capital Invertido": round(total_invertido_propio, 2),
-                    "Interés Simple": round(cap_simple, 2),
-                    "Interés Compuesto": round(cap_compuesto, 2),
-                    "Ganancia Neta Compuesta": round(cap_compuesto - total_invertido_propio, 2)
+                    "Month": mes,
+                    "Invested Capital": round(total_invertido_propio, 2),
+                    "Simple Interest": round(cap_simple, 2),
+                    "Compound Interest": round(cap_compuesto, 2),
+                    "Net Compound Profit": round(cap_compuesto - total_invertido_propio, 2)
                 })
 
         df_sim = pd.DataFrame(datos_meses)
         resultado_final = df_sim.iloc[-1]
 
         with col_sim2:
-            st.markdown("#### 📌 Resumen de la Simulación")
+            st.markdown("#### 📌 Simulation Summary")
             m1, m2, m3 = st.columns(3)
-            m1.metric("Capital Inicial + Aportes", f"${resultado_final['Capital Invertido']:.2f} USDT")
-            m2.metric("Total Final (Interés Compuesto)", f"${resultado_final['Interés Compuesto']:.2f} USDT")
-            m3.metric("Ganancia Limpia Total", f"+${resultado_final['Ganancia Neta Compuesta']:.2f} USDT", delta=f"{((resultado_final['Ganancia Neta Compuesta']/resultado_final['Capital Invertido'])*100):.1f}%")
+            m1.metric("Initial Capital + Deposits", f"${resultado_final['Invested Capital']:.2f} USDT")
+            m2.metric("Final Total (Compound Interest)", f"${resultado_final['Compound Interest']:.2f} USDT")
+            m3.metric("Total Net Profit", f"+${resultado_final['Net Compound Profit']:.2f} USDT", delta=f"{((resultado_final['Net Compound Profit']/resultado_final['Invested Capital'])*100):.1f}%")
 
             st.divider()
 
-            # Gráfico de curvas de crecimiento
+            # Growth Curves Chart
             fig_sim = go.Figure()
 
             fig_sim.add_trace(go.Scatter(
-                x=df_sim["Mes"], y=df_sim["Capital Invertido"],
-                mode='lines+markers', name='Capital Propio Invertido',
+                x=df_sim["Month"], y=df_sim["Invested Capital"],
+                mode='lines+markers', name='Invested Own Capital',
                 line=dict(color='gray', dash='dash')
             ))
 
             fig_sim.add_trace(go.Scatter(
-                x=df_sim["Mes"], y=df_sim["Interés Simple"],
-                mode='lines+markers', name='Crecimiento Simple (Sin Reinvertir)',
+                x=df_sim["Month"], y=df_sim["Simple Interest"],
+                mode='lines+markers', name='Simple Growth (No Reinvesting)',
                 line=dict(color='#FFA500')
             ))
 
             fig_sim.add_trace(go.Scatter(
-                x=df_sim["Mes"], y=df_sim["Interés Compuesto"],
-                mode='lines+markers', name='Crecimiento Compuesto (Reinvirtiendo)',
+                x=df_sim["Month"], y=df_sim["Compound Interest"],
+                mode='lines+markers', name='Compound Growth (Reinvesting)',
                 line=dict(color='#00FF7F', width=3)
             ))
 
             fig_sim.update_layout(
-                title="Evolución de Saldo en el Tiempo (USDT)",
-                xaxis_title="Meses",
+                title="Balance Evolution Over Time (USDT)",
+                xaxis_title="Months",
                 yaxis_title="USDT",
                 height=400,
                 legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
@@ -293,8 +293,8 @@ if oportunidades_seguras:
 
             st.plotly_chart(fig_sim, use_container_width=True)
 
-        st.markdown("#### 📜 Tabla de Crecimiento Mes a Mes")
+        st.markdown("#### 📜 Month-by-Month Growth Table")
         st.dataframe(df_sim, hide_index=True, use_container_width=True)
 
 else:
-    st.warning("⚠️ No se encontraron oportunidades que pasen los filtros estrictos de seguridad actualmente.")
+    st.warning("⚠️ No opportunities currently matching the strict safety filters were found.")
