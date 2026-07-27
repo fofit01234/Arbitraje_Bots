@@ -48,9 +48,18 @@ if "circuit_breaker_triggered" not in st.session_state:
 # OPTIMIZED EXTRACTION AND ROUTE FUNCTIONS
 # =========================================================
 @st.cache_resource
+@st.cache_resource
 def connect_exchange():
-    return ccxt.binance({"enableRateLimit": True})
-
+    """
+    Conecta a Binance usando un Proxy CORS público para evitar 
+    el bloqueo de IP y el geobloqueo en la nube gratis.
+    """
+    return ccxt.binance({
+        "enableRateLimit": True,
+        "options": {"defaultType": "spot"},
+        # Redirige la petición a través de un proxy europeo público
+        "proxy": "https://corsproxy.io/?"
+    })
 @st.cache_data(ttl=3600)  # Reload market list every hour
 def get_base_markets(_exchange):
     try:

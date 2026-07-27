@@ -24,8 +24,16 @@ st.caption("Delta-Neutral strategy with risk assessment and long-term capital pr
 # =========================================================
 @st.cache_resource
 def conectar_exchange():
-    return ccxt.binanceusdm({"enableRateLimit": True})
-
+   """
+    Conecta a Binance usando un Proxy CORS público para evitar 
+    el bloqueo de IP y el geobloqueo en la nube gratis.
+    """
+    return ccxt.binance({
+        "enableRateLimit": True,
+        "options": {"defaultType": "spot"},
+        # Redirige la petición a través de un proxy europeo público
+        "proxy": "https://corsproxy.io/?"
+    })
 @st.cache_data(ttl=60)
 def obtener_datos_mercado(_exchange):
     try:
